@@ -1,0 +1,76 @@
+fef (for-each-file)
+
+This is a command-line tool for listing and/or
+doing operations on multiple files.
+fef can recursively traverse within directory trees.
+It can be considered as an alternative to the
+classical 'find' command which exists in unix-like systems.
+
+
+=======================================================
+Documentation (fef --help)
+=======================================================
+
+fef: a tool for doing operations on each file within the specified directories
+Written by Nihat Engin Toklu < https://github.com/engintoklu > , 03 Oct 2014
+
+Usage:
+  fef <options> <directory1> <directory2> ... <directoryN> <expression1> <expression2> ... <expressionN>
+where
+  <directory>s specify where the <expression>s will be executed.
+    If omitted, the operation directory is assumed as the
+    current directory(.) .
+  <option>s can be omitted, or can be:
+    -r or -R    Recursion option. The <expression>s will be executed
+                in the subdirectories of the specified <directory>s
+  <expression>s are the commands which will be executed on each file
+    within the specified <directory>s.
+    The expressions will be executed in the specified order
+    If an expression returns logical false, the rest of the expressions
+    will be canceled for the file being processed.
+    An expression is written in this form:
+      [ command argument1 argument2 ... argumentN ]
+    Expressions can also include sub-expressions.
+    (i.e. a sub-expression can be used as an argument):
+      [ command1 [ command2 arguments ] ]
+    While using this program from a sh-compatible shell,
+    you will have to use quotations to prevent the shell from
+    interpreting the wildcards.
+    Here is an example shell line which will make fef
+    show the files with the names matching the pattern '*.txt' :
+      fef [ iname '*.txt' ] [ print ]
+
+Other usages are:
+  fef --help                (Show this help screen)
+  fef --license             (Show the license)
+  fef --commands            (List all commands)
+  fef --explain <command>   (Explain <command>)
+
+
+
+=======================================================
+License information (fef --license)
+=======================================================
+
+Copyright (c) 2014, Nihat Engin Toklu < https://github.com/engintoklu >
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

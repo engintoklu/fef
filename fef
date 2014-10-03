@@ -1,0 +1,977 @@
+#!/usr/bin/env python
+
+# fef
+# written by Nihat Engin Toklu
+
+from __future__ import print_function
+import sys
+import os
+import os.path
+import re
+import subprocess
+import time
+import datetime
+
+LICENSE="""
+Copyright (c) 2014, Nihat Engin Toklu < https://github.com/engintoklu >
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
+
+def at_least_one_exists_within(collection, candidates):
+    for candidate in candidates:
+        if candidate in collection:
+            return True
+    return False
+
+def arguments_of(iterable):
+    first = True
+    for q in iterable:
+        if first:
+            first = False
+        else:
+            yield q
+
+def indices_and_values_of(iterable):
+    i = 0
+    for q in iterable:
+        yield i, q
+        i += 1
+
+def escape(s):
+    if os.name in ["nt", "ce"]:
+        s = '"' + s.replace('"', '""') + '"'
+    elif os.name == "posix":
+        s = s.replace('\\', '\\\\')
+        s = s.replace('"', '\\"')
+        s = s.replace('$', '\\$')
+        s = s.replace('`', '\\`')
+        s = '"' + s + '"'
+    return s
+
+def what_happened():
+    raise Exception("Program reached an unexpected state")
+
+def complain_and_die(*a):
+    """Write something to stderr and then exit with code 1"""
+    print(sys.argv[0] + ":", *a, file=sys.stderr)
+    sys.exit(1)
+
+def verify_or_die(condition, *a):
+    """If the condition is False, write something to stderr and then exit with code 1"""
+    if not condition:
+        print(sys.argv[0] + ":", *a, file=sys.stderr)
+        sys.exit(1)
+
+def verify_arguments_count(tokens, expectednum):
+    """If len(tokens)-1 is not expectednum, report to stderr and exit with code 1.
+    len(tokens)-1, not len(tokens), is taken, because the first token is assumed to be the command name, not an argument."""
+    if len(tokens) - 1 != expectednum:
+        if expectednum == 0:
+            complain_and_die("'" + tokens[0] + "'", "was expecting no arguments, but received", len(tokens) - 1)
+        else:
+            complain_and_die("'" + tokens[0] + "'", "was expecting", expectednum, "arguments, but received", len(tokens) - 1)
+
+def is_string(s):
+    #return type(s) == type("")
+    return type(s).__name__ in ["str", "unicode", "bytes"]
+
+def is_list(lst):
+    return type(lst) == type([])
+
+def is_false(q):
+    assert is_string(q)
+    return q == ""
+
+def is_true(q):
+    assert is_string(q)
+    return q != ""
+
+def pattern_to_regexp(pattern):
+    e = re.escape(pattern)
+    e = e.replace("\\*", ".*")
+    e = e.replace("\\?", ".")
+    return e + "$"
+
+def put_slash(s):
+    if s[-1:] != os.path.sep:
+        return s + os.path.sep
+    else:
+        return s
+
+def at_least_one_match(regexps, s, flags=0):
+    for regexp in regexps:
+        if re.match(regexp, s, flags):
+            return True
+    return False
+
+def remove_dot_slash(s):
+    if s[0:2] == ("." + os.path.sep):
+        return s[2:]
+    else:
+        return s
+
+def express_logical(bool_value):
+    if bool_value:
+        return "true"
+    else:
+        return ""
+
+def evaluate_token(pathname, token):
+    if is_list(token):
+        return evaluate_expression(pathname, token)
+    else:
+        return token
+
+class CommandNewer:
+    @staticmethod
+    def run(pathname, tokens):
+        cmd = tokens[0]
+        args = tokens[1:]
+        for i, arg in indices_and_values_of(args):
+            args[i] = evaluate_token(pathname, arg)
+        nargs = len(args)
+        if nargs == 1:
+            reftime = os.path.getmtime(args[0])
+        elif nargs in (3, 4, 5):
+            year = int(args[0])
+            month = int(args[1])
+            day = int(args[2])
+            if nargs >= 4:
+                mins = int(args[3])
+            else:
+                mins = 0
+            if nargs >= 5:
+                secs = int(args[4])
+            else:
+                secs = 0
+            reftime = time.mktime(
+                datetime.datetime(year, month, day, mins, secs).timetuple())
+        else:
+            complain_and_die("'"+ cmd[0] +"' received invalid number of arguments.")
+
+        mtime = os.path.getmtime(pathname)
+
+        if cmd == "newer":
+            result = mtime > reftime
+        elif cmd == "newereq":
+            result = mtime >= reftime
+        elif cmd == "older":
+            result = mtime < reftime
+        elif cmd == "oldereq":
+            result = mtime <= reftime
+
+        return express_logical(result)
+
+    @staticmethod
+    def explain():
+        print("newer file1 file2  (is file1 newer than file2 ?)")
+        print("newereq file1 file2  (is file1 newer than or modified at the same time as file2 ?)")
+        print("older file1 file2  (is file1 older than file2 ?)")
+        print("oldereq file1 file2  (is file1 older than or modified at the same time as file2 ?)")
+        print()
+        print("These commands compare file1 and file2 in terms of modification dates.")
+        print("They return logical true or false, according to the result of the query")
+
+class CommandName:
+    @staticmethod
+    def run(pathname, tokens):
+        dirname, filename = os.path.split(pathname)
+        cmd = tokens[0]
+        args = tokens[1:]
+
+        if cmd in ("name", "iname"):
+            fname = filename
+        elif cmd in ("fullname", "ifullname"):
+            fname = os.path.abspath(pathname)
+        elif cmd in ("path", "ipath"):
+            fname = pathname
+        elif cmd in ("dirname", "idirname"):
+            fname = dirname
+        else:
+            what_happened()
+
+        if len(args) == 0:
+            return fname
+
+        for i, arg in indices_and_values_of(args):
+            args[i] = pattern_to_regexp(evaluate_token(pathname, arg))
+
+        if cmd[0] == "i":
+            return express_logical(at_least_one_match(args, fname, re.IGNORECASE))
+        else:
+            return express_logical(at_least_one_match(args, fname))
+
+    @staticmethod
+    def explain():
+        print("name pattern1 pattern2 ... patternN")
+        print("iname pattern1 pattern2 ... patternN")
+        print("fullname pattern1 pattern2 ... patternN")
+        print("ifullname pattern1 pattern2 ... patternN")
+        print("path pattern1 pattern2 ... patternN")
+        print("ipath pattern1 pattern2 ... patternN")
+        print("dirname pattern1 pattern2 ... patternN")
+        print("idirname pattern1 pattern2 ... patternN")
+        print()
+        print("These commands return true if the")
+        print("  name (file name without directory),")
+        print("  fullname (file name in absolute path format),")
+        print("  path (file name with directory),")
+        print("or")
+        print("  dirname (directory name of the file)")
+        print("match at least one of the specified patterns")
+        print("Otherwise, they return false.")
+        print()
+        print("If the command name begins with letter 'i'")
+        print("the pattern matching is to be done in a")
+        print("case insensitive way.")
+        print()
+        print("If these commands are called without any argument,")
+        print("they return the name, fullname, path or dirname")
+        print("of the current file")
+
+class CommandAnd:
+    @staticmethod
+    def run(pathname, tokens):
+        for arg in arguments_of(tokens):
+            if not is_true(evaluate_token(pathname, arg)):
+                return express_logical(False)
+        return express_logical(True)
+
+    @staticmethod
+    def explain():
+        print("and expression1 expression2 ... expressionN")
+        print()
+        print("Evaluates all expressions until one of them returns false")
+        print("The command returns true if all expressions return true")
+        print("Otherwise, the command returns false")
+
+class CommandOr:
+    @staticmethod
+    def run(pathname, tokens):
+        for arg in arguments_of(tokens):
+            if is_true(evaluate_token(pathname, arg)):
+                return express_logical(True)
+        return express_logical(False)
+
+    @staticmethod
+    def explain():
+        print("or expression1 expression2 ... expressionN")
+        print()
+        print("Evaluates all expressions until one of them returns true")
+        print("The command returns false if all expressions return false")
+        print("Otherwise, the command returns true")
+
+
+class CommandDo:
+    @staticmethod
+    def run(pathname, tokens):
+        last = express_logical(False)
+        for arg in arguments_of(tokens):
+            last = evaluate_token(pathname, arg)
+        return last
+
+    @staticmethod
+    def explain():
+        print("do expression1 expression2 ... expressionN")
+        print()
+        print("Evaluates all expressions and returns the returning value of the last expression")
+
+
+class CommandShow:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 0)
+        print(pathname)
+        return express_logical(True)
+
+    @staticmethod
+    def explain():
+        print("show")
+        print("print")
+        print()
+        print("Prints the file name")
+
+
+class CommandEcho:
+    @staticmethod
+    def run(pathname, tokens):
+        output = tokens[1:]
+        for i, o in indices_and_values_of(output):
+            output[i] = evaluate_token(pathname, o)
+        print(*output)
+        return express_logical(True)
+
+    @staticmethod
+    def explain():
+        print("echo argument1 argument2 ... argumentN")
+        print()
+        print("Prints the arguments")
+
+
+class CommandIf:
+    @staticmethod
+    def run(pathname, tokens):
+        for i, token in indices_and_values_of(tokens):
+            if (i / 2) * 2 == i:
+                continue
+            if is_true(evaluate_token(pathname, token)):
+                return evaluate_token(pathname, tokens[i + 1])
+        return express_logical(False)
+
+    @staticmethod
+    def explain():
+        print("if condition1 action1 condition2 action2 ... conditionN actionN")
+        print()
+        print("If condition1 is true, evaluates and returns action1")
+        print("Otherwise, if condition2 is true, evaluates and returns action2")
+        print("...and this goes on as you have more condition-action pairs.")
+        print("Since any non-empty string is accepted as logical true,")
+        print("you can write the string 'else' as a condition and have if-else structure:")
+        print("  if condition action1 else action2")
+
+
+class CommandNot:
+    @staticmethod
+    def run(pathname, tokens):
+        if len(tokens) != 2:
+            complain_and_die("'not' expects exactly one argument.")
+        return express_logical(not is_true(evaluate_token(pathname, tokens[1])))
+
+    @staticmethod
+    def explain():
+        print("not expression")
+        print()
+        print("If expression is equivalent to logical true, returns false.")
+        print("Otherwise, it returns true.")
+
+class CommandConcat:
+    @staticmethod
+    def run(pathname, tokens):
+        s = ""
+        for arg in arguments_of(tokens):
+            s += evaluate_token(pathname, arg)
+        return s
+
+    @staticmethod
+    def explain():
+        print("concat argument1 argument2 ... argumentN")
+        print()
+        print("Returns the concatenation of all the arguments")
+
+
+class CommandStrLen:
+    @staticmethod
+    def run(pathname, tokens):
+        if len(tokens) != 2:
+            complain_and_die("'strlen' expects exactly one argument.")
+        return str(len(evaluate_token(pathname, tokens[1])))
+
+    @staticmethod
+    def explain():
+        print("strlen expression")
+        print()
+        print("Returns the length of the string expression")
+
+
+class CommandSubStr:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_cound(tokens, 3)
+        cmd, s, i1, i2 = tokens
+        s = evaluate_token(pathname, s)
+        i1 = evaluate_token(pathname, i1)
+        i2 = evaluate_token(pathname, i2)
+        return s[i1:i2]
+
+    @staticmethod
+    def explain():
+        print("substr expression i j")
+        print()
+        print("Returns the substring of expression,")
+        print("which begins at i-th character and ends exclusively at j-th character.")
+
+
+
+class CommandStrMatch:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 2)
+        cmd, s, rexp = tokens
+        s = evaluate_token(pathname, s)
+        rexp = evaluate_token(pathname, rexp)
+        if cmd == "strmatch":
+            flags = 0
+        elif cmd == "strimatch":
+            flags = re.IGNORECASE
+        else:
+            what_happened()
+
+        return express_logical(re.match(rexp, s, flags))
+
+    @staticmethod
+    def explain():
+        print("strmatch string regexp")
+        print()
+        print("Returns true if the string matches the regular expression, regexp.")
+        print("Otherwise, it returns false.")
+
+
+class CommandStrReplace:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 3)
+        cmd, s, exp1, exp2 = tokens
+        s = evaluate_token(pathname, s)
+        exp1 = evaluate_token(pathname, exp1)
+        exp2 = evaluate_token(pathname, exp2)
+        if cmd == "strreplace":
+            flags = 0
+        elif cmd == "strireplace":
+            flags = re.IGNORECASE
+        else:
+            what_happened()
+        return re.sub(exp1, exp2, s)
+
+    @staticmethod
+    def explain():
+        print("strreplace string expression1 expression2")
+        print("strireplace string expression1 expression2")
+        print()
+        print("Replaces the substrings matching the regular expression expression1 in string with expression2.")
+        print("strireplace works the same way as strreplace, except that strireplace does case-insensitive matching.")
+
+class CommandParOpen:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 0)
+        return "("
+
+    @staticmethod
+    def explain():
+        print("paropen")
+        print()
+        print("Returns the opening bracket character '('")
+
+
+class CommandParClose:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 0)
+        return ")"
+
+    @staticmethod
+    def explain():
+        print("paropen")
+        print()
+        print("Returns the closing bracket character ')'")
+
+
+class CommandRParOpen:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 0)
+        return "["
+
+    @staticmethod
+    def explain():
+        print("paropen")
+        print()
+        print("Returns the opening rectangular bracket character '['")
+
+
+class CommandRParClose:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 0)
+        return "]"
+
+    @staticmethod
+    def explain():
+        print("paropen")
+        print()
+        print("Returns the closing rectangular bracket character ']'")
+
+
+class CommandRun:
+    @staticmethod
+    def run(pathname, tokens):
+        cmdline = []
+        for arg in arguments_of(tokens):
+            cmdline.append(evaluate_token(pathname, arg))
+        p = subprocess.Popen(cmdline,
+                             stdout=subprocess.PIPE,
+                             stdin=subprocess.PIPE)
+        p.stdin.close()
+        #lines = p.stdout.readlines()
+
+        def decode_if_needed(x):
+            if type(x).__name__ == "bytes":
+                return x.decode()
+            else:
+                return x
+
+        lines = [decode_if_needed(x) for x in p.stdout.readlines()]
+
+        cmd = tokens[0]
+
+        if cmd == "run":
+            for line in lines:
+                print(line, end="")
+            return express_logical(p.wait() == 0)
+        elif cmd == "capture":
+            result = "".join(lines)[:-1]
+            p.wait()
+            return result
+        elif cmd == "result":
+            return str(p.wait())
+        else:
+            what_happened()
+
+    @staticmethod
+    def explain():
+        print("run utility argument1 argument2 ... argumentN")
+        print("capture utility argument1 argument2 ... argumentN")
+        print("result utility argument1 argument2 ... argumentN")
+        print()
+        print("These commands execute the utility with the specified arguments.")
+        print("In more details:")
+        print("'run' executes the utility and returns true or false depending on the exit code of the process.")
+        print("'capture' executes the utility and returns the output of the process")
+        print("'result' executes the utility and returns the exit code of the process")
+
+
+class CommandContains:
+    @staticmethod
+    def run(pathname, tokens):
+        cmd, rexp = tokens
+        rexp = evaluate_token(pathname, rexp)
+
+        if os.path.isdir(pathname):
+            return express_logical(False)
+
+        if cmd == "contains":
+            flags = 0
+        elif cmd == "icontains":
+            flags = re.IGNORECASE
+        else:
+            what_happened()
+
+        result = False
+        f = open(pathname, "rU")
+        while True:
+            s = f.readline()
+            if s == "":
+                break
+            if re.match(".*" + rexp + ".*", s, flags) != None:
+                result = True
+                break
+        f.close()
+        return express_logical(result)
+
+    @staticmethod
+    def explain():
+        print("contains regexp")
+        print("icontains regexp")
+        print()
+        print("These commands read the current file and return true if it contains a string matching the specified regular expression, regexp.")
+        print("Otherwise, false is returned.")
+        print("The command 'icontains' does case insensitive search.")
+        print("If the current file is a directory, these commands return false.")
+
+
+class CommandGrep:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 1)
+        cmd, rexp = tokens
+        rexp = evaluate_token(pathname, rexp)
+
+        if os.path.isdir(pathname):
+            return express_logical(True)
+
+        if cmd == "grep":
+            flags = 0
+        elif cmd == "igrep":
+            flags = re.IGNORECASE
+        elif cmd == "search":
+            flags = 0
+            rexp = re.escape(rexp)
+        elif cmd == "isearch":
+            rexp = re.escape(rexp)
+            flags = re.IGNORECASE
+        else:
+            what_happened()
+
+        result = True
+        f = open(pathname, "rU")
+        linenum = 0
+        while True:
+            linenum += 1
+            s = f.readline()
+            if s == "":
+                break
+            if re.match(".*" + rexp + ".*", s, flags) != None:
+                print(pathname + ":" + str(linenum) + ": " + s.rstrip())
+        f.close()
+        return express_logical(result)
+
+    @staticmethod
+    def explain():
+        print("search text")
+        print("isearch text")
+        print()
+        print("These commands show which lines of the current file contain the specified strings.")
+        print("The command 'isearch' does case insensitive search.")
+        print("Nothing is done if the current file is a directory")
+        print()
+        print()
+        print("grep regexp")
+        print("igrep regexp")
+        print()
+        print("These commands show which lines of the current file contain strings matching the specified regular expression, regexp.")
+        print("The command 'igrep' does case insensitive search.")
+        print("Nothing is done if the current file is a directory")
+
+
+class CommandIsFile:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 0)
+        return express_logical(os.path.isfile(pathname))
+
+    @staticmethod
+    def explain():
+        print("isfile")
+        print()
+        print("Returns true if the current file is a regular file (not a directory).")
+        print("Otherwise, it returns false.")
+
+
+class CommandIsDir:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 0)
+        return express_logical(os.path.isdir(pathname))
+
+    @staticmethod
+    def explain():
+        print("isdir")
+        print()
+        print("Returns true if the current file is a directory.")
+        print("Otherwise, it returns false.")
+
+
+class CommandIsLink:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 0)
+        return express_logical(os.path.islink(pathname))
+
+    @staticmethod
+    def explain():
+        print("islink")
+        print()
+        print("Returns true if the current file is a link.")
+        print("Otherwise, it returns false.")
+
+
+class CommandIsMount:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 0)
+        return express_logical(os.path.ismount(pathname))
+
+    @staticmethod
+    def explain():
+        print("ismount")
+        print()
+        print("Returns true if the current file is a mount.")
+        print("Otherwise, it returns false.")
+
+
+class CommandExt:
+    @staticmethod
+    def run(pathname, tokens):
+        verify_arguments_count(tokens, 0)
+
+        firstname, lastname = os.path.splitext(pathname)
+
+        if tokens[0] == 'ext':
+            result = lastname[1:]
+        elif tokens[0] == '.ext':
+            result = lastname
+        elif tokens[0] == 'withoutext':
+            result = firstname
+        else:
+            complain_and_die("Program reached an unexpected state")
+
+        return result
+
+    @staticmethod
+    def explain():
+        print("ext   Returns the extension of a filename ('txt' for 'abc.txt'")
+        print(".ext  Returns the extension and the dot ('.txt' for 'abc.txt')")
+        print("withoutext  Returns the filename without the extension ('abc' for 'abc.txt')")
+
+
+
+commands = {
+    "name" : CommandName,
+    "iname" : CommandName,
+    "path" : CommandName,
+    "ipath" : CommandName,
+    "dirname" : CommandName,
+    "idirname" : CommandName,
+    "fullname" : CommandName,
+    "ifullname" : CommandName,
+    "contains" : CommandContains,
+    "icontains" : CommandContains,
+    "isfile" : CommandIsFile,
+    "isdir" : CommandIsDir,
+    "islink" : CommandIsLink,
+    "ismount" : CommandIsMount,
+    "show" : CommandShow,
+    "print" : CommandShow,
+    "newer" : CommandNewer,
+    "newereq" : CommandNewer,
+    "older" : CommandNewer,
+    "oldereq" : CommandNewer,
+    "run" : CommandRun,
+    "capture" : CommandRun,
+    "result" : CommandRun,
+    "or" : CommandOr,
+    "and" : CommandAnd,
+    "if" : CommandIf,
+    "do" : CommandDo,
+    "echo" : CommandEcho,
+    "result" : CommandRun,
+    "concat" : CommandConcat,
+    "strlen" : CommandStrLen,
+    "strmatch" : CommandStrMatch,
+    "strimatch" : CommandStrMatch,
+    "strreplace" : CommandStrReplace,
+    "strireplace" : CommandStrReplace,
+    "not" : CommandNot,
+    "paropen" : CommandParOpen,
+    "parclose" : CommandParClose,
+    "rparopen" : CommandRParOpen,
+    "rparclose" : CommandRParClose,
+    "grep" : CommandGrep,
+    "igrep": CommandGrep,
+    "search" : CommandGrep,
+    "isearch": CommandGrep,
+    "ext" : CommandExt,
+    ".ext" : CommandExt,
+    "withoutext" : CommandExt
+    }
+
+def evaluate_expression(pathname, tokens):
+    global commands
+    cmd = tokens[0]
+    if not is_string(cmd):
+        complain_and_die("First token of an expression must be string, not", cmd)
+
+    if cmd in commands:
+        return commands[cmd].run(pathname, tokens)
+    else:
+        complain_and_die("Unknown command:", cmd)
+
+def convert_to_expression(lst, paropen="(", parclose=")"):
+    level = 0
+    mylists = []
+    for item in lst:
+        if item == paropen:
+            level += 1
+            mylists.append([])
+        elif item == parclose:
+            level -= 1
+            if len(mylists) > 1:
+                mylists[-2].append(mylists[-1])
+                mylists.pop()
+            else:
+                return mylists[-1]
+        else:
+            if level == 0:
+                complain_and_die("Syntax error")
+            mylists[-1].append(item)
+
+def test():
+    print(convert_to_expression(["(", "a", "b", "(", "c", "d", ")", "e", ")"]))
+
+def main(args):
+    global commands, LICENSE
+
+    if len(args) == 0:
+        show_help()
+        sys.exit()
+
+    paropen = "["
+    parclose = "]"
+
+    options_with_args = ["-explain", "--explain"]
+    options = {}
+    directories = []
+    expression = []
+
+    depth = 0
+    no_more_options = False
+    current_option = None
+    for arg in args:
+        if current_option != None:
+            options[current_option] = arg
+            current_option = None
+        elif arg == paropen:
+            depth = depth + 1
+            expression.append(arg)
+        elif arg == parclose:
+            if depth == 0:
+                complain_and_die("Mismatched " + parclose)
+            depth = depth - 1
+            expression.append(arg)
+        elif depth == 0:
+            if arg == "--":
+                no_more_options = True
+            elif arg[:1] == "-" and (not no_more_options):
+                if arg in options_with_args:
+                    current_option = arg
+                else:
+                    options[arg] = None
+            else:
+                directories.append(arg)
+        else:
+            expression.append(arg)
+    if depth > 0:
+        complain_and_die("Missing " + parclose)
+    if len(directories) == 0:
+        directories = ["."]
+    expression = [paropen, "and"] + expression + [parclose]
+
+    if at_least_one_exists_within(options, ("-r", "-R")):
+        recursion = True
+    else:
+        recursion = False
+
+    if at_least_one_exists_within(options, ("-h", "-help", "--help")):
+        show_help()
+    elif at_least_one_exists_within(options, ("-commands", "--commands")):
+        for cmd in commands:
+            print(cmd, end=" ")
+        print()
+    elif "-explain" in options:
+        commands[options["-explain"]].explain()
+    elif "--explain" in options:
+        commands[options["--explain"]].explain()
+    elif at_least_one_exists_within(options, ("-license", "--license")):
+        print(LICENSE)
+    else:
+        #print("DEBUG:")
+        #print(directories)
+        #print(options)
+        #print(expression)
+        expression = convert_to_expression(expression, paropen, parclose)
+        if recursion:
+            for starting_directory in directories:
+                for dirname, dirs, files in os.walk(starting_directory):
+                    for filename in files:
+                        pathname = os.path.join(dirname, filename)
+                        evaluate_expression(pathname, expression)
+                    for filename in dirs:
+                        pathname = os.path.join(dirname, filename)
+                        evaluate_expression(pathname, expression)
+        else:
+            for starting_directory in directories:
+                for filename in os.listdir(starting_directory):
+                    pathname = os.path.join(starting_directory, filename)
+                    evaluate_expression(pathname, expression)
+
+    #if len(args) == 0:
+    #    show_help()
+    #elif args[0] in ["--help", "-h", "-help"]:
+    #    show_help()
+    #elif args[0] in ["-commands", "--commands"]:
+    #    for cmd in commands:
+    #        print(cmd, end=" ")
+    #    print()
+    #elif args[0] in ["-explain", "--explain"]:
+    #    commands[args[1]].explain()
+    #elif args[0] in ["-license", "--license"]:
+    #    print(LICENSE)
+    #elif len(args) > 2:
+    #    starting_directory = args[0]
+    #    if args[1] == "(":
+    #        paropen = "("
+    #        parclose = ")"
+    #    elif args[1] == "[":
+    #        paropen = "["
+    #        parclose = "]"
+    #    else:
+    #        complain_and_die("The expression should start with ( or [")
+    #    #expression = convert_to_expression(args[1:], paropen, parclose)
+    #    expression = convert_to_expression([paropen, "and"] + args[1:] + [parclose], paropen, parclose)
+    #    for dirname, dirs, files in os.walk(starting_directory):
+    #        for filename in files:
+    #            pathname = os.path.join(dirname, filename)
+    #            evaluate_expression(pathname, expression)
+    #        for filename in dirs:
+    #            pathname = os.path.join(dirname, filename)
+    #            evaluate_expression(pathname, expression)
+
+def show_help():
+    print("fef: a tool for doing operations on each file within the specified directories")
+    print("Written by Nihat Engin Toklu < https://github.com/engintoklu > , 03 Oct 2014")
+    print()
+    print("Usage:")
+    print("  fef <options> <directory1> <directory2> ... <directoryN> <expression1> <expression2> ... <expressionN>")
+    print("where")
+    print("  <directory>s specify where the <expression>s will be executed.")
+    print("    If omitted, the operation directory is assumed as the")
+    print("    current directory(.) .")
+    print("  <option>s can be omitted, or can be:")
+    print("    -r or -R    Recursion option. The <expression>s will be executed")
+    print("                in the subdirectories of the specified <directory>s")
+    print("  <expression>s are the commands which will be executed on each file")
+    print("    within the specified <directory>s.")
+    print("    The expressions will be executed in the specified order")
+    print("    If an expression returns logical false, the rest of the expressions")
+    print("    will be canceled for the file being processed.")
+    print("    An expression is written in this form:")
+    print("      [ command argument1 argument2 ... argumentN ]")
+    print("    Expressions can also include sub-expressions.")
+    print("    (i.e. a sub-expression can be used as an argument):")
+    print("      [ command1 [ command2 arguments ] ]")
+    print("    While using this program from a sh-compatible shell,")
+    print("    you will have to use quotations to prevent the shell from")
+    print("    interpreting the wildcards.")
+    print("    Here is an example shell line which will make fef")
+    print("    show the files with the names matching the pattern '*.txt' :")
+    print("      fef [ iname '*.txt' ] [ print ]")
+    print()
+    print("Other usages are:")
+    print("  fef --help                (Show this help screen)")
+    print("  fef --license             (Show the license)")
+    print("  fef --commands            (List all commands)")
+    print("  fef --explain <command>   (Explain <command>)")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
