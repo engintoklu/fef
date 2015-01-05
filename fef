@@ -11,9 +11,10 @@ import re
 import subprocess
 import time
 import datetime
+import shutil
 
 LICENSE="""
-Copyright (c) 2014, Nihat Engin Toklu < https://github.com/engintoklu >
+Copyright (c) 2014, 2015, Nihat Engin Toklu < https://github.com/engintoklu >
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -71,9 +72,13 @@ def escape(s):
 def what_happened():
     raise Exception("Program reached an unexpected state")
 
+def complain(*a):
+    """Write something to stderr"""
+    print(sys.argv[0] + ":", *a, file=sys.stderr)
+
 def complain_and_die(*a):
     """Write something to stderr and then exit with code 1"""
-    print(sys.argv[0] + ":", *a, file=sys.stderr)
+    complain(*a)
     sys.exit(1)
 
 def verify_or_die(condition, *a):
@@ -184,10 +189,10 @@ class CommandNewer:
 
     @staticmethod
     def explain():
-        print("newer file1 file2  (is file1 newer than file2 ?)")
-        print("newereq file1 file2  (is file1 newer than or modified at the same time as file2 ?)")
-        print("older file1 file2  (is file1 older than file2 ?)")
-        print("oldereq file1 file2  (is file1 older than or modified at the same time as file2 ?)")
+        print("[ newer file1 file2 ]  (is file1 newer than file2 ?)")
+        print("[ newereq file1 file2 ]  (is file1 newer than or modified at the same time as file2 ?)")
+        print("[ older file1 file2 ]  (is file1 older than file2 ?)")
+        print("[ oldereq file1 file2 ]  (is file1 older than or modified at the same time as file2 ?)")
         print()
         print("These commands compare file1 and file2 in terms of modification dates.")
         print("They return logical true or false, according to the result of the query")
@@ -223,14 +228,14 @@ class CommandName:
 
     @staticmethod
     def explain():
-        print("name pattern1 pattern2 ... patternN")
-        print("iname pattern1 pattern2 ... patternN")
-        print("fullname pattern1 pattern2 ... patternN")
-        print("ifullname pattern1 pattern2 ... patternN")
-        print("path pattern1 pattern2 ... patternN")
-        print("ipath pattern1 pattern2 ... patternN")
-        print("dirname pattern1 pattern2 ... patternN")
-        print("idirname pattern1 pattern2 ... patternN")
+        print("[ name pattern1 pattern2 ... patternN ]")
+        print("[ iname pattern1 pattern2 ... patternN ]")
+        print("[ fullname pattern1 pattern2 ... patternN ]")
+        print("[ ifullname pattern1 pattern2 ... patternN ]")
+        print("[ path pattern1 pattern2 ... patternN ]")
+        print("[ ipath pattern1 pattern2 ... patternN ]")
+        print("[ dirname pattern1 pattern2 ... patternN ]")
+        print("[ idirname pattern1 pattern2 ... patternN ]")
         print()
         print("These commands return true if the")
         print("  name (file name without directory),")
@@ -259,7 +264,7 @@ class CommandAnd:
 
     @staticmethod
     def explain():
-        print("and expression1 expression2 ... expressionN")
+        print("[ and expression1 expression2 ... expressionN ]")
         print()
         print("Evaluates all expressions until one of them returns false")
         print("The command returns true if all expressions return true")
@@ -275,7 +280,7 @@ class CommandOr:
 
     @staticmethod
     def explain():
-        print("or expression1 expression2 ... expressionN")
+        print("[ or expression1 expression2 ... expressionN ]")
         print()
         print("Evaluates all expressions until one of them returns true")
         print("The command returns false if all expressions return false")
@@ -292,7 +297,7 @@ class CommandDo:
 
     @staticmethod
     def explain():
-        print("do expression1 expression2 ... expressionN")
+        print("[ do expression1 expression2 ... expressionN ]")
         print()
         print("Evaluates all expressions and returns the returning value of the last expression")
 
@@ -306,8 +311,8 @@ class CommandShow:
 
     @staticmethod
     def explain():
-        print("show")
-        print("print")
+        print("[ show ]")
+        print("[ print ]")
         print()
         print("Prints the file name")
 
@@ -323,7 +328,7 @@ class CommandEcho:
 
     @staticmethod
     def explain():
-        print("echo argument1 argument2 ... argumentN")
+        print("[ echo argument1 argument2 ... argumentN ]")
         print()
         print("Prints the arguments")
 
@@ -340,14 +345,14 @@ class CommandIf:
 
     @staticmethod
     def explain():
-        print("if condition1 action1 condition2 action2 ... conditionN actionN")
+        print("[ if condition1 action1 condition2 action2 ... conditionN actionN ]")
         print()
         print("If condition1 is true, evaluates and returns action1")
         print("Otherwise, if condition2 is true, evaluates and returns action2")
-        print("...and this goes on as you have more condition-action pairs.")
+        print("...and this goes on as long as there are more condition-action pairs.")
         print("Since any non-empty string is accepted as logical true,")
-        print("you can write the string 'else' as a condition and have if-else structure:")
-        print("  if condition action1 else action2")
+        print("you can write the string 'else' as a condition to a have an if-else structure:")
+        print(" [ if condition action1 else action2 ]")
 
 
 class CommandNot:
@@ -359,7 +364,7 @@ class CommandNot:
 
     @staticmethod
     def explain():
-        print("not expression")
+        print("[ not expression ]")
         print()
         print("If expression is equivalent to logical true, returns false.")
         print("Otherwise, it returns true.")
@@ -374,7 +379,7 @@ class CommandConcat:
 
     @staticmethod
     def explain():
-        print("concat argument1 argument2 ... argumentN")
+        print("[ concat argument1 argument2 ... argumentN ]")
         print()
         print("Returns the concatenation of all the arguments")
 
@@ -388,7 +393,7 @@ class CommandStrLen:
 
     @staticmethod
     def explain():
-        print("strlen expression")
+        print("[ strlen expression ]")
         print()
         print("Returns the length of the string expression")
 
@@ -396,16 +401,16 @@ class CommandStrLen:
 class CommandSubStr:
     @staticmethod
     def run(pathname, tokens):
-        verify_arguments_cound(tokens, 3)
+        verify_arguments_count(tokens, 3)
         cmd, s, i1, i2 = tokens
         s = evaluate_token(pathname, s)
-        i1 = evaluate_token(pathname, i1)
-        i2 = evaluate_token(pathname, i2)
+        i1 = int(evaluate_token(pathname, i1))
+        i2 = int(evaluate_token(pathname, i2))
         return s[i1:i2]
 
     @staticmethod
     def explain():
-        print("substr expression i j")
+        print("[ substr expression i j ]")
         print()
         print("Returns the substring of expression,")
         print("which begins at i-th character and ends exclusively at j-th character.")
@@ -430,7 +435,7 @@ class CommandStrMatch:
 
     @staticmethod
     def explain():
-        print("strmatch string regexp")
+        print("[ strmatch string regexp ]")
         print()
         print("Returns true if the string matches the regular expression, regexp.")
         print("Otherwise, it returns false.")
@@ -454,8 +459,8 @@ class CommandStrReplace:
 
     @staticmethod
     def explain():
-        print("strreplace string expression1 expression2")
-        print("strireplace string expression1 expression2")
+        print("[ strreplace string expression1 expression2 ]")
+        print("[ strireplace string expression1 expression2 ]")
         print()
         print("Replaces the substrings matching the regular expression expression1 in string with expression2.")
         print("strireplace works the same way as strreplace, except that strireplace does case-insensitive matching.")
@@ -468,7 +473,7 @@ class CommandParOpen:
 
     @staticmethod
     def explain():
-        print("paropen")
+        print("[ paropen ]")
         print()
         print("Returns the opening bracket character '('")
 
@@ -481,7 +486,7 @@ class CommandParClose:
 
     @staticmethod
     def explain():
-        print("paropen")
+        print("[ parclose ]")
         print()
         print("Returns the closing bracket character ')'")
 
@@ -494,7 +499,7 @@ class CommandRParOpen:
 
     @staticmethod
     def explain():
-        print("paropen")
+        print("[ rparopen ]")
         print()
         print("Returns the opening rectangular bracket character '['")
 
@@ -507,7 +512,7 @@ class CommandRParClose:
 
     @staticmethod
     def explain():
-        print("paropen")
+        print("[ rparclose ]")
         print()
         print("Returns the closing rectangular bracket character ']'")
 
@@ -549,9 +554,9 @@ class CommandRun:
 
     @staticmethod
     def explain():
-        print("run utility argument1 argument2 ... argumentN")
-        print("capture utility argument1 argument2 ... argumentN")
-        print("result utility argument1 argument2 ... argumentN")
+        print("[ run utility argument1 argument2 ... argumentN ]")
+        print("[ capture utility argument1 argument2 ... argumentN ]")
+        print("[ result utility argument1 argument2 ... argumentN ]")
         print()
         print("These commands execute the utility with the specified arguments.")
         print("In more details:")
@@ -590,8 +595,8 @@ class CommandContains:
 
     @staticmethod
     def explain():
-        print("contains regexp")
-        print("icontains regexp")
+        print("[ contains regexp ]")
+        print("[ icontains regexp ]")
         print()
         print("These commands read the current file and return true if it contains a string matching the specified regular expression, regexp.")
         print("Otherwise, false is returned.")
@@ -637,16 +642,16 @@ class CommandGrep:
 
     @staticmethod
     def explain():
-        print("search text")
-        print("isearch text")
+        print("[ search text ]")
+        print("[ isearch text ]")
         print()
         print("These commands show which lines of the current file contain the specified strings.")
         print("The command 'isearch' does case insensitive search.")
         print("Nothing is done if the current file is a directory")
         print()
         print()
-        print("grep regexp")
-        print("igrep regexp")
+        print("[ grep regexp ]")
+        print("[ igrep regexp ]")
         print()
         print("These commands show which lines of the current file contain strings matching the specified regular expression, regexp.")
         print("The command 'igrep' does case insensitive search.")
@@ -661,7 +666,7 @@ class CommandIsFile:
 
     @staticmethod
     def explain():
-        print("isfile")
+        print("[ isfile ]")
         print()
         print("Returns true if the current file is a regular file (not a directory).")
         print("Otherwise, it returns false.")
@@ -675,7 +680,7 @@ class CommandIsDir:
 
     @staticmethod
     def explain():
-        print("isdir")
+        print("[ isdir ]")
         print()
         print("Returns true if the current file is a directory.")
         print("Otherwise, it returns false.")
@@ -689,7 +694,7 @@ class CommandIsLink:
 
     @staticmethod
     def explain():
-        print("islink")
+        print("[ islink ]")
         print()
         print("Returns true if the current file is a link.")
         print("Otherwise, it returns false.")
@@ -703,7 +708,7 @@ class CommandIsMount:
 
     @staticmethod
     def explain():
-        print("ismount")
+        print("[ ismount ]")
         print()
         print("Returns true if the current file is a mount.")
         print("Otherwise, it returns false.")
@@ -729,9 +734,9 @@ class CommandExt:
 
     @staticmethod
     def explain():
-        print("ext   Returns the extension of a filename ('txt' for 'abc.txt'")
-        print(".ext  Returns the extension and the dot ('.txt' for 'abc.txt')")
-        print("withoutext  Returns the filename without the extension ('abc' for 'abc.txt')")
+        print("[ ext ]  Returns the extension of a filename ('txt' for 'abc.txt'")
+        print("[ .ext ]  Returns the extension and the dot ('.txt' for 'abc.txt')")
+        print("[ withoutext ]  Returns the filename without the extension ('abc' for 'abc.txt')")
 
 
 
@@ -766,6 +771,7 @@ commands = {
     "echo" : CommandEcho,
     "result" : CommandRun,
     "concat" : CommandConcat,
+    "substr" : CommandSubStr,
     "strlen" : CommandStrLen,
     "strmatch" : CommandStrMatch,
     "strimatch" : CommandStrMatch,
@@ -938,7 +944,8 @@ def main(args):
 
 def show_help():
     print("fef: a tool for doing operations on each file within the specified directories")
-    print("Written by Nihat Engin Toklu < https://github.com/engintoklu > , 03 Oct 2014")
+    print("Written by Nihat Engin Toklu < https://github.com/engintoklu >")
+    print("Version: 05 Jan 2015")
     print()
     print("Usage:")
     print("  fef <options> <directory1> <directory2> ... <directoryN> <expression1> <expression2> ... <expressionN>")
